@@ -1,0 +1,103 @@
+{{/* 
+  # Copyright 2025 VDURA Inc.
+  #
+  # Licensed under the Apache License, Version 2.0 (the "License");
+  # you may not use this file except in compliance with the License.
+  # You may obtain a copy of the License at
+  #
+  #     http://www.apache.org/licenses/LICENSE-2.0
+  #
+  # Unless required by applicable law or agreed to in writing, software
+  # distributed under the License is distributed on an "AS IS" BASIS,
+  # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  # See the License for the specific language governing permissions and
+  # limitations under the License.
+*/}}
+{{- if .Values.kmm.enabled }}
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 VDURA Inc.
+
+# Kernel Module Manager (KMM) Module for PanFS
+apiVersion: kmm.sigs.x-k8s.io/v1beta1
+kind: Module
+metadata:
+  name: panfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: panfs-kmm-module
+    product: com.vdura.csi.panfs
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.imagePullSecrets }}
+
+  # Please make sure you have created the image pull secret in the same namespace
+  # Check with: kubectl get secrets -n {{ .Release.Namespace }}
+  # If not, create with:
+  #   kubectl create secret docker-registry -n {{ .Release.Namespace }} {{ index .Values.imagePullSecrets 0 }} \
+  #     --docker-server=<REGISTRY_URL> \
+  #     --docker-username=<USERNAME> \
+  #     --docker-password=<PASSWORD>
+  imageRepoSecret:
+    {{- range .Values.imagePullSecrets }}
+    name: {{ . }}
+    {{- end }}
+  {{- else }}
+
+  # If your cluster does not inherit image pull credentials from the default ServiceAccount,
+  # uncomment the line below and set the secret name to enable pulling images from a private registry.
+  imageRepoSecret:
+    # name: <IMAGE_PULL_SECRET_NAME>
+  {{- end }}
+  {{- if .Values.kmm.selector }}
+
+  # Node selector for scheduling the KMM Module pods (to load the PanFS kernel module)
+  # Should match the nodes where the PanFS consumer workloads supposed to run
+  # Ensure that the nodes have the appropriate labels
+  # kubectl get nodes --show-labels
+  selector:
+    {{- toYaml .Values.kmm.selector | nindent 4 }}
+  {{- end }}
+
+  moduleLoader:
+    container:
+      modprobe:
+        moduleName: panfs
+
+        {{- if .Values.kmm.encryptionSupport }}
+
+        # Encryption support requires loading the wolfssl module.
+        # If encryption is not needed or, comment out the modulesLoadingOrder below.
+        modulesLoadingOrder: 
+          - panfs
+          - wolfssl
+        {{- else }}
+
+        # If encryption support is required, load the wolfssl module before panfs.
+        # To enable encryption, uncomment and set modulesLoadingOrder as shown below.
+        # modulesLoadingOrder: 
+        #  - panfs
+        #  - wolfssl
+        {{- end }}
+
+      imagePullPolicy: {{ .Values.kmm.pullPolicy | default "Always" }}
+
+      # PanFS DFC/KMM image containing the PanFS kernel module
+      kernelMappings:
+      {{- range .Values.kmm.kernelMappings }}
+      {{- if .literal }}
+        - literal: {{ .literal }}
+      {{- end }}
+      {{- if .regexp }}
+        # For each node running a kernel matching the regexp below,
+        # KMM will create a DaemonSet running the image specified in containerImage
+        # with ${KERNEL_FULL_VERSION} replaced with the kernel version.
+        - regexp: '{{ .regexp }}'
+      {{- end }}
+          containerImage: {{ .containerImage | replace "{{ .Values.dfc.privateRegistry }}" $.Values.dfc.privateRegistry | replace "{{ .Values.dfc.version }}" $.Values.dfc.version }}
+      {{- else }}
+        - literal: "<KERNEL_VERSION>"         # Replace with your Worker node kernel version
+          containerImage: "<PANFS_DFC_IMAGE>" # Change to Kernel-related corresponding DFC/KMM image
+      {{- end }}
+{{ end }}

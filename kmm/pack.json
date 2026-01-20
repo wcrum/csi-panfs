@@ -1,0 +1,19 @@
+{
+    "cloudTypes": [
+      "all"
+    ],
+    "annotations": {
+      "docsURL": "https://kmm.sigs.k8s.io/",
+      "description": "The kernel module management operator builds, signs and loads kernel modules in Kubernetes clusters. ",
+      "source": "kubernetes-sigs"
+    },
+    "displayName": "Kernel Module Management",
+    "kubeManifests": [
+        "manifests/kmm.yaml",
+        "manifests/crds.yaml"
+    ],
+    "layer": "addon",
+    "name": "kmm",
+    "version": "0.0.1"
+  }
+  

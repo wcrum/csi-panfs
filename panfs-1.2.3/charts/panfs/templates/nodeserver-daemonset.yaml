@@ -1,0 +1,263 @@
+{{/* 
+  # Copyright 2025 VDURA Inc.
+  #
+  # Licensed under the Apache License, Version 2.0 (the "License");
+  # you may not use this file except in compliance with the License.
+  # You may obtain a copy of the License at
+  #
+  #     http://www.apache.org/licenses/LICENSE-2.0
+  #
+  # Unless required by applicable law or agreed to in writing, software
+  # distributed under the License is distributed on an "AS IS" BASIS,
+  # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  # See the License for the specific language governing permissions and
+  # limitations under the License.
+*/}}
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 VDURA Inc.
+
+# DaemonSet for the CSI PanFS node plugin
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-panfs-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: csi-panfs-node
+    product: com.vdura.csi.panfs
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 4 }}
+    {{- end }}
+spec: # csi-panfs-node
+  selector:
+    matchLabels:
+      app: csi-panfs-node
+  {{- if .Values.nodeServer.updateStrategy }}
+
+  # Update strategy for the DaemonSet pods
+  updateStrategy:
+    {{- toYaml .Values.nodeServer.updateStrategy | nindent 4 }}
+  {{- end }}
+
+  template:
+    metadata:
+      labels:
+        app: csi-panfs-node
+        product: com.vdura.csi.panfs
+        {{- if .Values.labels }}
+        {{- toYaml .Values.labels | nindent 8 }}
+        {{- end }}
+
+    spec:
+      # Pod priority class
+      priorityClassName: {{ .Values.nodeServer.priorityClassName }}
+
+      # Host networking for csi driver node pods, must be set to 'true'
+      hostNetwork: true
+
+      # ServiceAccount for node plugin
+      serviceAccount: {{ .Release.Namespace }}-node
+      {{- if .Values.imagePullSecrets }}
+
+      # Please make sure you have created the image pull secret in the same namespace
+      # Check with: kubectl get secrets -n {{ .Release.Namespace }}
+      # If not, create with:
+      # kubectl create secret docker-registry -n {{ .Release.Namespace }} {{ index .Values.imagePullSecrets 0 }} \
+      #   --docker-server=<REGISTRY_URL> \
+      #   --docker-username=<USERNAME> \
+      #   --docker-password=<PASSWORD_OR_TOKEN>
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- else }}
+
+      # Uncomment the line below and set the secret name to enable pulling images from a private registry.
+      imagePullSecrets:
+        # - name: <IMAGE_PULL_SECRET_NAME>
+      {{- end }}
+      {{- if .Values.seLinux }}
+
+      # SELinux security context
+      securityContext:
+        {{- if .Values.csi.seLinuxOptions }}
+        seLinuxOptions:
+          {{- toYaml .Values.csi.seLinuxOptions | nindent 10 }}
+        {{- end }}
+      {{- end }}
+
+      {{- if .Values.nodeServer.tolerations}}
+
+      # Tolerations for scheduling the DaemonSet pods
+      # Should match the tolerations of the PanFS consumer workloads
+      # Double-check that the tolerations are correct:
+      # kubectl describe node <NODE_NAME> | grep -A10 Taints
+      tolerations:
+        {{- toYaml .Values.nodeServer.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmm.enabled }}
+
+      # Ensure the DaemonSet pods are scheduled only on nodes with the PanFS kernel module loaded
+      # This label is applied by the KMM operator when the PanFS module is successfully loaded
+      nodeSelector:
+        # Naming convention: kmm.node.kubernetes.io/<csi-driver-namespace>.<module-name>.ready
+        {{ .Values.kmm.nodeReadyLabel.name | replace "{{ .Release.Namespace }}" .Release.Namespace }}: "{{ .Values.kmm.nodeReadyLabel.value }}"
+      {{- else if .Values.nodeServer.selector }}
+
+      # Node selector for scheduling the DaemonSet pods
+      # Should match the nodes where the PanFS consumer workloads supposed to run
+      # Double-check that the nodes labels are correct:
+      # kubectl get nodes --show-labels
+      nodeSelector:
+        {{- toYaml .Values.nodeServer.selector | nindent 8 }}
+      {{- end }}
+
+      initContainers:
+        # Init container to enable PanFS mount helper
+        - name: get-plugin-bin
+          image: {{ .Values.csi.image | replace "{{ .Chart.AppVersion }}" .Chart.AppVersion }}
+          imagePullPolicy: IfNotPresent
+          command: ["cp", "/panfs-csi", "/var/panfs/"]
+          volumeMounts:
+            - name: csi-plugin-bin
+              mountPath: /var/panfs
+
+      containers:
+        # Main PanFS CSI node plugin container
+        - name: csi-panfs-plugin
+          image: {{ .Values.dfc.privateRegistry }}/panfs-dfc:{{ .Values.dfc.version }}
+          imagePullPolicy: {{ .Values.csi.pullPolicy }}
+          args:
+            - "/var/panfs/panfs-csi"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--v=5"
+          env:
+            - name: CSI_ENDPOINT
+              value: /csi/csi.sock
+
+          {{- if .Values.csi.resources }}
+
+          # Resource requests and limits for the driver registrar sidecar
+          # Limits should be set to prevent excessive resource consumption
+          # Requests should be set to ensure the container gets scheduled
+          resources:
+            {{- toYaml .Values.csi.resources | nindent 12 }}
+          {{- end }}
+
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "test -S $(CSI_ENDPOINT)"]
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # Must run in privileged mode
+          securityContext:
+            privileged: true
+            {{- if .Values.seLinux }}
+            {{- if .Values.csi.seLinuxOptions }}
+            # SELinux security context
+            seLinuxOptions:
+              {{- toYaml .Values.csi.seLinuxOptions | nindent 14 }}
+            {{- end }}
+            {{- end }}
+
+          volumeMounts:
+            - name: csi-plugin-bin
+              mountPath: /var/panfs
+
+            - name: socket-dir
+              mountPath: /csi
+
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+            {{- if .Values.seLinux }}
+
+            - name: selinux
+              mountPath: /sys/fs/selinux
+              mountPropagation: None
+
+            - name: selinux-config
+              mountPath: /etc/selinux
+              readOnly: true
+            {{- end }}
+
+        # CSI node-driver-registrar sidecar
+        - name: csi-driver-registrar
+          image: {{ .Values.nodeServer.driverRegistrar.image }}
+          imagePullPolicy: {{ .Values.nodeServer.driverRegistrar.pullPolicy }}
+          args:
+            - "--v={{ .Values.nodeServer.driverRegistrar.logLevel }}"
+            - "--csi-address=$(ADDRESS)"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--timeout={{ .Values.nodeServer.driverRegistrar.timeout }}"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/com.vdura.csi.panfs/csi.sock
+
+          {{- if .Values.nodeServer.driverRegistrar.resources }}
+
+          # Resource requests and limits for the driver registrar sidecar
+          # Limits should be set to prevent excessive resource consumption
+          # Requests should be set to ensure the container gets scheduled
+          resources:
+            {{- toYaml .Values.nodeServer.driverRegistrar.resources | nindent 12 }}
+          {{- end }}
+
+          livenessProbe:
+            exec:
+              command:
+                - /csi-node-driver-registrar
+                - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
+                - --mode=kubelet-registration-probe
+            initialDelaySeconds: 30
+            timeoutSeconds: 15
+
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+            - name: registration-dir
+              mountPath: /registration
+
+      volumes:
+        # For DFC binary
+        - name: csi-plugin-bin
+          emptyDir: {}
+
+        # For kubelet plugin registration
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate
+
+        # For CSI socket
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/com.vdura.csi.panfs
+            type: DirectoryOrCreate
+
+        # For mounting volumes
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        {{- if .Values.seLinux }}
+
+        # SELinux context support
+        - name: selinux
+          hostPath:
+            path: /sys/fs/selinux
+            type: Directory
+
+        # SELinux configuration
+        - name: selinux-config
+          hostPath:
+            path: /etc/selinux
+            type: Directory
+        {{- end }}

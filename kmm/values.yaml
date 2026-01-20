@@ -1,0 +1,8 @@
+pack:
+  content:
+    images:
+      - image: gcr.io/k8s-staging-kmm/kernel-module-management-operator:latest
+      - image: gcr.io/k8s-staging-kmm/kernel-module-management-worker:latest
+      - image: gcr.io/k8s-staging-kmm/kernel-module-management-signimage:latest
+      - image: gcr.io/k8s-staging-kmm/kernel-module-management-webhook-server:latest
+      - image: gcr.io/kaniko-project/executor:latest

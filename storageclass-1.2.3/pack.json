@@ -1,0 +1,19 @@
+{
+    "annotations": {
+      "docsURL": "https://github.com/panasasinc/panfs-container-storage-interface-oss",
+      "source": "panfs",
+      "description": "PanFS Storage Class"
+    },
+    "cloudTypes": [
+      "all"
+    ],
+    "displayName": "PanFS Storage Class",
+    "charts": [
+      "charts/storageclass-1.2.3.tgz"
+    ],
+    "layer": "addon",
+    "addonType":"system app",
+    "name": "csi-panfs-storageclass",
+    "version": "1.2.3"
+  }
+  

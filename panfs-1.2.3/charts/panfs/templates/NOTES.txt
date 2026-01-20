@@ -1,0 +1,16 @@
+PanFS CSI Driver ({{ .Chart.Version }}) has been successfully installed!
+
+Verification steps:
+{{- if .Values.kmm.enabled }}
+1. KMM status: 
+   kubectl get module panfs -n {{ .Release.Namespace }} -o jsonpath='{.status}' | jq .
+2. CSI node/controller:
+   kubectl get po -n {{ .Release.Namespace }} -l product=com.vdura.csi.panfs
+3. Check CSIDriver:
+   kubectl get csidrivers.storage.k8s.io -l product=com.vdura.csi.panfs
+{{- else }}
+1. CSI node/controller:
+   kubectl get po -n {{ .Release.Namespace }} -l product=com.vdura.csi.panfs
+2. Check CSIDriver:
+   kubectl get csidrivers.storage.k8s.io -l product=com.vdura.csi.panfs
+{{- end  }}
